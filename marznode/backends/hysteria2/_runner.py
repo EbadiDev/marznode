@@ -5,7 +5,7 @@ import tempfile
 from collections import deque
 
 import yaml
-from anyio import BrokenResourceError, ClosedResourceError, create_memory_object_stream, EndOfStream
+from anyio import BrokenResourceError, ClosedResourceError, create_memory_object_stream
 
 from marznode.backends.hysteria2._utils import get_version
 
@@ -28,9 +28,6 @@ class Hysteria:
         ) as temp_file:
             yaml.dump(config, temp_file)
         cmd = [self._executable_path, "server", "-c", temp_file.name]
-        
-        logger.info(f"Starting Hysteria with command: {' '.join(cmd)}")
-        logger.info(f"Config file contents:\n{yaml.dump(config)}")
 
         self._process = await asyncio.create_subprocess_shell(
             " ".join(cmd),
@@ -38,9 +35,8 @@ class Hysteria:
             stderr=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
         )
-        logger.info("Hysteria process created")
-        self._capture_task = asyncio.create_task(self.__capture_process_logs())
-        logger.info("Hysteria log capture task created")
+        logger.info("Hysteria has started")
+        asyncio.create_task(self.__capture_process_logs())
 
     def stop(self):
         if self.running:
@@ -56,34 +52,29 @@ class Hysteria:
 
         async def capture_stream(stream):
             while True:
-                try:
-                    output = await stream.readline()
-                    if not output:
-                        break
-                    output_str = output.decode('utf-8', errors='replace').strip()
-                    logger.info(f"Hysteria output: {output_str}")  # Add this line
-                    for stm in self._snd_streams:
-                        try:
-                            await stm.send(output_str)
-                        except EndOfStream:
-                            self._snd_streams.remove(stm)
-                    self._logs_buffer.append(output_str)
-                except Exception as e:
-                    logger.error(f"Error capturing logs: {e}")
-                    break
-            logger.warning("Hysteria has stopped")
+                output = await stream.readline()
+                for stm in self._snd_streams:
+                    try:
+                        await stm.send(output)
+                    except (ClosedResourceError, BrokenResourceError):
+                        self._snd_streams.remove(stm)
+                        continue
+                self._logs_buffer.append(output)
+                if output == b"":
+                    """break in case of eof"""
+                    logger.warning("Hysteria has stopped")
+                    return
 
         await asyncio.gather(
-            capture_stream(self._process.stderr),
-            capture_stream(self._process.stdout)
+            capture_stream(self._process.stderr), capture_stream(self._process.stdout)
         )
 
     def get_logs_stm(self):
-        new_snd_stm, new_rcv_stm = create_memory_object_stream(100) 
+        new_snd_stm, new_rcv_stm = create_memory_object_stream()
         self._snd_streams.append(new_snd_stm)
         return new_rcv_stm
 
     def get_buffer(self):
         """makes a copy of the buffer, so it could be read multiple times
         the buffer is never cleared in case logs from xray's exit are useful"""
-        return list(self._logs_buffer)
+        return self._logs_buffer.copy()
