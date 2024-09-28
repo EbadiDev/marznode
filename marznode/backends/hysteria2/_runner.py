@@ -28,6 +28,9 @@ class Hysteria:
         ) as temp_file:
             yaml.dump(config, temp_file)
         cmd = [self._executable_path, "server", "-c", temp_file.name]
+        
+        logger.info(f"Starting Hysteria with command: {' '.join(cmd)}")
+        logger.info(f"Config file contents:\n{yaml.dump(config)}")
 
         self._process = await asyncio.create_subprocess_shell(
             " ".join(cmd),
@@ -35,8 +38,9 @@ class Hysteria:
             stderr=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
         )
-        logger.info("Hysteria has started")
-        asyncio.create_task(self.__capture_process_logs())
+        logger.info("Hysteria process created")
+        self._capture_task = asyncio.create_task(self.__capture_process_logs())
+        logger.info("Hysteria log capture task created")
 
     def stop(self):
         if self.running:
@@ -57,6 +61,7 @@ class Hysteria:
                     if not output:
                         break
                     output_str = output.decode('utf-8', errors='replace').strip()
+                    logger.info(f"Hysteria output: {output_str}")  # Add this line
                     for stm in self._snd_streams:
                         try:
                             await stm.send(output_str)

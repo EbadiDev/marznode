@@ -3,7 +3,7 @@ import json
 import logging
 from secrets import token_hex
 from typing import AsyncIterator
-
+import yaml
 import aiohttp
 from aiohttp import web, ClientConnectorError
 
@@ -67,6 +67,8 @@ class HysteriaBackend(VPNBackend):
         api_port = find_free_port()
         self._stats_port = find_free_port()
         self._stats_secret = token_hex(16)
+        logger.info(f"API Port: {api_port}, Stats Port: {self._stats_port}")
+        
         if self._auth_site:
             await self._app_runner.cleanup()
         app = web.Application()
@@ -77,10 +79,17 @@ class HysteriaBackend(VPNBackend):
         self._auth_site = web.TCPSite(self._app_runner, "127.0.0.1", api_port)
 
         await self._auth_site.start()
+        logger.info("Auth site started")
+        
         cfg = HysteriaConfig(config, api_port, self._stats_port, self._stats_secret)
         cfg.register_inbounds(self._storage)
         self._inbounds = [cfg.get_inbound()]
-        await self._runner.start(cfg.render())
+        
+        rendered_config = cfg.render()
+        logger.info(f"Rendered Hysteria config:\n{yaml.dump(rendered_config)}")
+        
+        await self._runner.start(rendered_config)
+        logger.info("Hysteria runner started")
 
     async def stop(self):
         await self._auth_site.stop()
