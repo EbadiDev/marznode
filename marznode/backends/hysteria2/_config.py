@@ -35,9 +35,15 @@ class HysteriaConfig:
             try:
                 obfs_type = loaded_config["obfs"]["type"]
                 obfs_password = loaded_config["obfs"][obfs_type]["password"]
-            except:
+            except KeyError:
                 pass
+        
+        self._tls_config = loaded_config.get('tls', {})
 
+        self._masquerade = loaded_config.get('masquerade', {})
+
+        self._outbounds = loaded_config.get('outbounds', [])
+        
         self._inbound = {
             "tag": "hysteria2",
             "protocol": "hysteria2",

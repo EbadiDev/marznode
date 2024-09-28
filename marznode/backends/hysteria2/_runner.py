@@ -5,7 +5,7 @@ import tempfile
 from collections import deque
 
 import yaml
-from anyio import BrokenResourceError, ClosedResourceError, create_memory_object_stream
+from anyio import BrokenResourceError, ClosedResourceError, create_memory_object_stream, EndOfStream
 
 from marznode.backends.hysteria2._utils import get_version
 
@@ -52,29 +52,33 @@ class Hysteria:
 
         async def capture_stream(stream):
             while True:
-                output = await stream.readline()
-                for stm in self._snd_streams:
-                    try:
-                        await stm.send(output)
-                    except (ClosedResourceError, BrokenResourceError):
-                        self._snd_streams.remove(stm)
-                        continue
-                self._logs_buffer.append(output)
-                if output == b"":
-                    """break in case of eof"""
-                    logger.warning("Hysteria has stopped")
-                    return
+                try:
+                    output = await stream.readline()
+                    if not output:
+                        break
+                    output_str = output.decode('utf-8', errors='replace').strip()
+                    for stm in self._snd_streams:
+                        try:
+                            await stm.send(output_str)
+                        except EndOfStream:
+                            self._snd_streams.remove(stm)
+                    self._logs_buffer.append(output_str)
+                except Exception as e:
+                    logger.error(f"Error capturing logs: {e}")
+                    break
+            logger.warning("Hysteria has stopped")
 
         await asyncio.gather(
-            capture_stream(self._process.stderr), capture_stream(self._process.stdout)
+            capture_stream(self._process.stderr),
+            capture_stream(self._process.stdout)
         )
 
     def get_logs_stm(self):
-        new_snd_stm, new_rcv_stm = create_memory_object_stream()
+        new_snd_stm, new_rcv_stm = create_memory_object_stream(100) 
         self._snd_streams.append(new_snd_stm)
         return new_rcv_stm
 
     def get_buffer(self):
         """makes a copy of the buffer, so it could be read multiple times
         the buffer is never cleared in case logs from xray's exit are useful"""
-        return self._logs_buffer.copy()
+        return list(self._logs_buffer)
