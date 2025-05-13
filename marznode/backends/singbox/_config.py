@@ -31,8 +31,11 @@ class SingBoxConfig(dict):
 
         self.inbounds = []
         self.inbounds_by_tag = {}
+        self.endpoints = []
+        self.endpoints_by_tag = {}
+        
         self._resolve_inbounds()
-
+        self._resolve_endpoints()
         self._apply_api()
 
     def _apply_api(self):
@@ -110,8 +113,67 @@ class SingBoxConfig(dict):
             self.inbounds.append(settings)
             self.inbounds_by_tag[inbound["tag"]] = settings
 
+    def _resolve_endpoints(self):
+        for endpoint in self.get("endpoints", []):
+            if endpoint.get("type") not in {"wireguard"} or not endpoint.get("tag"):
+                continue
+                
+            settings = {
+                "tag": endpoint["tag"],
+                "protocol": endpoint["type"],
+                "port": endpoint.get("listen_port"),
+                "address": endpoint.get("address", []),
+                "private_key": endpoint.get("private_key"),
+                "mtu": endpoint.get("mtu", 1408),
+            }
+            
+            self.endpoints.append(settings)
+            self.endpoints_by_tag[endpoint["tag"]] = settings
+            
+            inbound_settings = {
+                "tag": endpoint["tag"],
+                "protocol": endpoint["type"],
+                "port": endpoint.get("listen_port"),
+                "network": "udp",
+                "tls": "none",
+                "sni": [],
+                "host": [],
+                "path": None,
+                "header_type": None,
+                "flow": None,
+            }
+            
+            self.inbounds.append(inbound_settings)
+            self.inbounds_by_tag[endpoint["tag"]] = inbound_settings
+
     def append_user(self, user: User, inbound: Inbound):
         identifier = str(user.id) + "." + user.username
+        
+        if inbound.protocol == "wireguard":
+            endpoint_config = None
+            for endpoint in self.get("endpoints", []):
+                if endpoint.get("tag") == inbound.tag:
+                    endpoint_config = endpoint
+                    if "peers" not in endpoint:
+                        endpoint["peers"] = []
+                    
+                    account = accounts_map[inbound.protocol](
+                        identifier=identifier, 
+                        seed=user.key,
+                        endpoint_config=endpoint
+                    )
+                    
+                    endpoint["peers"].append(account.to_dict())
+                    if (
+                        identifier 
+                        not in self["experimental"]["v2ray_api"]["stats"]["users"]
+                    ):
+                        self["experimental"]["v2ray_api"]["stats"]["users"].append(
+                            identifier
+                        )
+                    break
+            return
+        
         account = accounts_map[inbound.protocol](identifier=identifier, seed=user.key)
         for i in self.get("inbounds", []):
             if i.get("tag") == inbound.tag:
@@ -129,6 +191,25 @@ class SingBoxConfig(dict):
 
     def pop_user(self, user: User, inbound: Inbound):
         identifier = str(user.id) + "." + user.username
+        
+        if inbound.protocol == "wireguard":
+            for endpoint in self.get("endpoints", []):
+                if endpoint.get("tag") != inbound.tag or not endpoint.get("peers"):
+                    continue
+                
+                account = accounts_map[inbound.protocol](
+                    identifier=identifier, 
+                    seed=user.key,
+                    endpoint_config=endpoint
+                )
+                
+                endpoint["peers"] = [
+                    peer for peer in endpoint["peers"]
+                    if peer.get("name") != identifier
+                ]
+                break
+            return
+        
         for i in self.get("inbounds", []):
             if i.get("tag") != inbound.tag or not i.get("users"):
                 continue
@@ -144,10 +225,18 @@ class SingBoxConfig(dict):
             storage.register_inbound(inbound)
 
     def list_inbounds(self) -> list[Inbound]:
-        return [
+        inbounds = [
             Inbound(tag=i["tag"], protocol=i["protocol"], config=i)
             for i in self.inbounds_by_tag.values()
         ]
+        
+        for endpoint in self.endpoints_by_tag.values():
+            if endpoint["tag"] not in [i.tag for i in inbounds]:
+                inbounds.append(
+                    Inbound(tag=endpoint["tag"], protocol=endpoint["protocol"], config=endpoint)
+                )
+        
+        return inbounds
 
     def to_json(self, **json_kwargs):
         return json.dumps(self, **json_kwargs)

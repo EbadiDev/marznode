@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from marznode.utils.key_gen import generate_password, generate_uuid
+from marznode.backends.singbox.wireguard_account import WireGuardAccount
 
 
 class SingBoxAccount(BaseModel, ABC):
@@ -118,4 +119,5 @@ accounts_map = {
     "socks": SocksAccount,
     "mixed": MixedAccount,
     "http": HTTPAccount,
+    "wireguard": WireGuardAccount,
 }

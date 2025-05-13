@@ -34,6 +34,7 @@ class SingBoxBackend(VPNBackend):
         self._config = None
         self._config_update_event = asyncio.Event()
         self._inbound_tags = set()
+        self._endpoint_tags = set()
         self._inbounds = list()
         self._api = None
         self._runner = SingBoxRunner(executable_path)
@@ -66,7 +67,7 @@ class SingBoxBackend(VPNBackend):
                     self._config_update_event.clear()
 
     def contains_tag(self, tag: str) -> bool:
-        return tag in self._inbound_tags
+        return tag in self._inbound_tags or tag in self._endpoint_tags
 
     def list_inbounds(self) -> list:
         return self._inbounds
@@ -106,6 +107,7 @@ class SingBoxBackend(VPNBackend):
         self._config = SingBoxConfig(backend_config, api_port=api_port)
         self._config.register_inbounds(self._storage)
         self._inbound_tags = {i["tag"] for i in self._config.inbounds}
+        self._endpoint_tags = {e["tag"] for e in self._config.endpoints}
         self._inbounds = list(self._config.list_inbounds())
         await self.add_storage_users()
         self._save_config(self._config.to_json(), full=True)
@@ -114,10 +116,11 @@ class SingBoxBackend(VPNBackend):
 
     async def stop(self):
         await self._runner.stop()
-        for tag in self._inbound_tags:
+        for tag in self._inbound_tags.union(self._endpoint_tags):
             self._storage.remove_inbound(tag)
         self._inbound_tags = set()
-        self._inbounds = set()
+        self._endpoint_tags = set()
+        self._inbounds = list()
 
     async def restart(self, backend_config: str | None) -> list[Inbound] | None:
         async with self._restart_lock:
